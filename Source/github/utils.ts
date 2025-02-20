@@ -4,41 +4,27 @@
  *--------------------------------------------------------------------------------------------*/
 "use strict";
 
-import * as crypto from "crypto";
-import * as OctokitTypes from "@octokit/types";
-import * as vscode from "vscode";
-
-import { Repository } from "../api/api";
-import { GitApiImpl } from "../api/api1";
-import { AuthProvider, GitHubServerType } from "../common/authentication";
+import * as crypto from 'crypto';
+import * as OctokitTypes from '@octokit/types';
+import * as vscode from 'vscode';
+import { Repository } from '../api/api';
+import { GitApiImpl } from '../api/api1';
+import { AuthProvider, GitHubServerType } from '../common/authentication';
+import { IComment, IReviewThread, Reaction, SPECIAL_COMMENT_AUTHORS, SubjectType } from '../common/comment';
+import { DiffHunk, parseDiffHunk } from '../common/diffHunk';
+import { GitHubRef } from '../common/githubRef';
+import Logger from '../common/logger';
+import { Remote } from '../common/remote';
+import { Resource } from '../common/resources';
+import { GITHUB_ENTERPRISE, OVERRIDE_DEFAULT_BRANCH, PR_SETTINGS_NAMESPACE, URI } from '../common/settingKeys';
+import * as Common from '../common/timelineEvent';
+import { gitHubLabelColor, uniqBy } from '../common/utils';
+import { OctokitCommon } from './common';
+import { FolderRepositoryManager, PullRequestDefaults } from './folderRepositoryManager';
+import { GitHubRepository, ViewerPermission } from './githubRepository';
+import * as GraphQL from './graphql';
 import {
-	IComment,
-	IReviewThread,
-	Reaction,
-	SPECIAL_COMMENT_AUTHORS,
-	SubjectType,
-} from "../common/comment";
-import { DiffHunk, parseDiffHunk } from "../common/diffHunk";
-import { GitHubRef } from "../common/githubRef";
-import Logger from "../common/logger";
-import { GitHubRemote, Remote } from "../common/remote";
-import { Resource } from "../common/resources";
-import {
-	GITHUB_ENTERPRISE,
-	OVERRIDE_DEFAULT_BRANCH,
-	PR_SETTINGS_NAMESPACE,
-	URI,
-} from "../common/settingKeys";
-import * as Common from "../common/timelineEvent";
-import { gitHubLabelColor, uniqBy } from "../common/utils";
-import { OctokitCommon } from "./common";
-import {
-	FolderRepositoryManager,
-	PullRequestDefaults,
-} from "./folderRepositoryManager";
-import { GitHubRepository, ViewerPermission } from "./githubRepository";
-import * as GraphQL from "./graphql";
-import {
+	AccountType,
 	IAccount,
 	IActor,
 	IGitHubRef,
@@ -59,6 +45,7 @@ import {
 	reviewerId,
 	reviewerLabel,
 	ReviewState,
+	toAccountType,
 	User,
 } from "./interface";
 import { IssueModel } from "./issueModel";
@@ -448,22 +435,7 @@ export function convertRESTUserToAccount(
 	user: OctokitCommon.PullsListResponseItemUser,
 	githubRepository?: GitHubRepository,
 ): IAccount {
-	return {
-		login: user.login,
-		url: user.html_url,
-		avatarUrl: githubRepository
-			? getAvatarWithEnterpriseFallback(
-					user.avatar_url,
-					user.gravatar_id ?? undefined,
-					githubRepository.remote.isEnterprise,
-				)
-			: user.avatar_url,
-		id: user.node_id,
-		email: user.email ?? undefined,
-		specialDisplayName: SPECIAL_COMMENT_AUTHORS[user.login]
-			? (user.name ?? SPECIAL_COMMENT_AUTHORS[user.login].name)
-			: undefined,
-	};
+	return parseAccount(user, githubRepository);
 }
 
 export function convertRESTHeadToIGitHubRef(
@@ -726,14 +698,7 @@ export function parseGraphQLComment(
 		commitId: comment.commit.oid,
 		originalPosition: comment.originalPosition,
 		originalCommitId: comment.originalCommit && comment.originalCommit.oid,
-		user: comment.author
-			? {
-					...parseAuthor(comment.author, githubRepository),
-					specialDisplayName: specialAuthor
-						? (comment.author.name ?? specialAuthor.name)
-						: undefined,
-				}
-			: undefined,
+		user: comment.author ? { ...parseAccount(comment.author, githubRepository), specialDisplayName: specialAuthor ? (GraphQL.isAccount(comment.author) ? specialAuthor.name : undefined) : undefined } : undefined,
 		createdAt: comment.createdAt,
 		htmlUrl: comment.url,
 		graphNodeId: comment.id,
@@ -763,7 +728,7 @@ export function parseGraphQlIssueComment(
 		bodyHTML: comment.bodyHTML,
 		canEdit: comment.viewerCanDelete,
 		canDelete: comment.viewerCanDelete,
-		user: parseAuthor(comment.author, githubRepository),
+		user: parseAccount(comment.author, githubRepository),
 		createdAt: comment.createdAt,
 		htmlUrl: comment.url,
 		graphNodeId: comment.id,
@@ -824,50 +789,45 @@ function parseRef(
 	};
 }
 
-function parseAuthor(
-	author: {
-		login: string;
-
-		url: string;
-
-		avatarUrl: string;
-
-		email?: string;
-
-		id: string;
-
-		name?: string;
-	} | null,
-	githubRepository: GitHubRepository,
+export function parseAccount(
+	author: { login: string; url: string; avatarUrl: string; email?: string, id: string, name?: string, __typename: string } | { login: string; url: string; avatar_url: string; email?: string | null, node_id: string, name?: string | null, type: string } | null,
+	githubRepository?: GitHubRepository,
 ): IAccount {
 	if (author) {
+		const avatarUrl = 'avatarUrl' in author ? author.avatarUrl : author.avatar_url;
+		const id = 'id' in author ? author.id : author.node_id;
 		return {
 			login: author.login,
 			url: author.url,
-			avatarUrl: getAvatarWithEnterpriseFallback(
-				author.avatarUrl,
-				undefined,
-				githubRepository.remote.isEnterprise,
-			),
-			email: author.email,
-			id: author.id,
-			specialDisplayName: SPECIAL_COMMENT_AUTHORS[author.login]
-				? (author.name ?? SPECIAL_COMMENT_AUTHORS[author.login].name)
-				: undefined,
+			avatarUrl: githubRepository ? getAvatarWithEnterpriseFallback(avatarUrl, undefined, githubRepository.remote.isEnterprise) : avatarUrl,
+			email: author.email ?? undefined,
+			id: id,
+			name: author.name ?? undefined,
+			specialDisplayName: SPECIAL_COMMENT_AUTHORS[author.login] ? (author.name ?? SPECIAL_COMMENT_AUTHORS[author.login].name) : undefined,
+			accountType: toAccountType('__typename' in author ? author.__typename : author.type),
 		};
 	} else {
 		return {
-			login: "",
-			url: "",
-			id: "",
+			login: '',
+			url: '',
+			id: '',
+			accountType: AccountType.User
 		};
 	}
 }
 
-export function parseGraphQLReviewers(
-	data: GraphQL.GetReviewRequestsResponse,
-	remote: GitHubRemote,
-): (IAccount | ITeam)[] {
+function parseTeam(team: GraphQL.Team, githubRepository: GitHubRepository): ITeam {
+	return {
+		name: team.name,
+		url: team.url,
+		avatarUrl: getAvatarWithEnterpriseFallback(team.avatarUrl, undefined, githubRepository.remote.isEnterprise),
+		id: team.id,
+		org: githubRepository.remote.owner,
+		slug: team.slug
+	};
+}
+
+export function parseGraphQLReviewers(data: GraphQL.GetReviewRequestsResponse, repository: GitHubRepository): (IAccount | ITeam)[] {
 	if (!data.repository) {
 		return [];
 	}
@@ -875,44 +835,12 @@ export function parseGraphQLReviewers(
 	const reviewers: (IAccount | ITeam)[] = [];
 
 	for (const reviewer of data.repository.pullRequest.reviewRequests.nodes) {
-		if (reviewer.requestedReviewer?.login) {
-			const account: IAccount = {
-				login: reviewer.requestedReviewer.login,
-				url: reviewer.requestedReviewer.url,
-				avatarUrl: getAvatarWithEnterpriseFallback(
-					reviewer.requestedReviewer.avatarUrl,
-					undefined,
-					remote.isEnterprise,
-				),
-				email: reviewer.requestedReviewer.email,
-				name: reviewer.requestedReviewer.name,
-				id: reviewer.requestedReviewer.id,
-				specialDisplayName: SPECIAL_COMMENT_AUTHORS[
-					reviewer.requestedReviewer.login
-				]
-					? (reviewer.requestedReviewer.name ??
-						SPECIAL_COMMENT_AUTHORS[
-							reviewer.requestedReviewer.login
-						].name)
-					: undefined,
-			};
-
-			reviewers.push(account);
-		} else if (reviewer.requestedReviewer) {
-			const team: ITeam = {
-				name: reviewer.requestedReviewer.name,
-				url: reviewer.requestedReviewer.url,
-				avatarUrl: getAvatarWithEnterpriseFallback(
-					reviewer.requestedReviewer.avatarUrl,
-					undefined,
-					remote.isEnterprise,
-				),
-				id: reviewer.requestedReviewer.id,
-				org: remote.owner,
-				slug: reviewer.requestedReviewer.slug,
-			};
-
+		if (GraphQL.isTeam(reviewer.requestedReviewer)) {
+			const team: ITeam = parseTeam(reviewer.requestedReviewer, repository);
 			reviewers.push(team);
+		} else {
+			const account: IAccount = parseAccount(reviewer.requestedReviewer, repository);
+			reviewers.push(account);
 		}
 	}
 
@@ -1115,12 +1043,8 @@ export function parseGraphQLPullRequest(
 			graphQLPullRequest.headRepository,
 		),
 		isRemoteBaseDeleted: !graphQLPullRequest.baseRef,
-		base: parseRef(
-			graphQLPullRequest.baseRef?.name ?? graphQLPullRequest.baseRefName,
-			graphQLPullRequest.baseRefOid,
-			graphQLPullRequest.baseRepository,
-		),
-		user: parseAuthor(graphQLPullRequest.author, githubRepository),
+		base: parseRef(graphQLPullRequest.baseRef?.name ?? graphQLPullRequest.baseRefName, graphQLPullRequest.baseRefOid, graphQLPullRequest.baseRepository),
+		user: parseAccount(graphQLPullRequest.author, githubRepository),
 		merged: graphQLPullRequest.merged,
 		mergeable: parseMergeability(
 			graphQLPullRequest.mergeable,
@@ -1149,9 +1073,7 @@ export function parseGraphQLPullRequest(
 		),
 		projectItems: parseProjectItems(graphQLPullRequest.projectItems?.nodes),
 		milestone: parseMilestone(graphQLPullRequest.milestone),
-		assignees: graphQLPullRequest.assignees?.nodes.map((assignee) =>
-			parseAuthor(assignee, githubRepository),
-		),
+		assignees: graphQLPullRequest.assignees?.nodes.map(assignee => parseAccount(assignee, githubRepository)),
 		commits: parseCommits(graphQLPullRequest.commits.nodes),
 		reactionCount: graphQLPullRequest.reactions.totalCount,
 		commentCount: graphQLPullRequest.comments.totalCount,
@@ -1278,7 +1200,7 @@ function parseComments(
 
 	for (const comment of comments) {
 		parsedComments.push({
-			author: parseAuthor(comment.author, githubRepository),
+			author: parseAccount(comment.author, githubRepository),
 			body: comment.body,
 			databaseId: comment.databaseId,
 			reactionCount: comment.reactions.totalCount,
@@ -1305,10 +1227,8 @@ export function parseGraphQLIssue(
 		titleHTML: issue.titleHTML,
 		createdAt: issue.createdAt,
 		updatedAt: issue.updatedAt,
-		assignees: issue.assignees?.nodes.map((assignee) =>
-			parseAuthor(assignee, githubRepository),
-		),
-		user: parseAuthor(issue.author, githubRepository),
+		assignees: issue.assignees?.nodes.map(assignee => parseAccount(assignee, githubRepository)),
+		user: parseAccount(issue.author, githubRepository),
 		labels: issue.labels.nodes,
 		milestone: parseMilestone(issue.milestone),
 		repositoryName:
@@ -1317,19 +1237,15 @@ export function parseGraphQLIssue(
 			issue.repository?.owner.login ?? githubRepository.remote.owner,
 		repositoryUrl: issue.repository?.url ?? githubRepository.remote.url,
 		projectItems: parseProjectItems(issue.projectItems?.nodes),
-		comments: issue.comments.nodes?.map((comment) =>
-			parseIssueComment(comment),
-		),
+		comments: issue.comments.nodes?.map(comment => parseIssueComment(comment, githubRepository)),
 		reactionCount: issue.reactions.totalCount,
 		commentCount: issue.comments.totalCount,
 	};
 }
 
-function parseIssueComment(
-	comment: GraphQL.AbbreviatedIssueComment,
-): IIssueComment {
+function parseIssueComment(comment: GraphQL.AbbreviatedIssueComment, githubRepository: GitHubRepository): IIssueComment {
 	return {
-		author: comment.author,
+		author: parseAccount(comment.author, githubRepository),
 		body: comment.body,
 		databaseId: comment.databaseId,
 		reactionCount: comment.reactions.totalCount,
@@ -1343,20 +1259,14 @@ function parseSuggestedReviewers(
 	if (!suggestedReviewers) {
 		return [];
 	}
-
-	const ret: ISuggestedReviewer[] = suggestedReviewers.map(
-		(suggestedReviewer) => {
-			return {
-				login: suggestedReviewer.reviewer.login,
-				avatarUrl: suggestedReviewer.reviewer.avatarUrl,
-				name: suggestedReviewer.reviewer.name,
-				url: suggestedReviewer.reviewer.url,
-				isAuthor: suggestedReviewer.isAuthor,
-				isCommenter: suggestedReviewer.isCommenter,
-				id: suggestedReviewer.reviewer.id,
-			};
-		},
-	);
+	const ret: ISuggestedReviewer[] = suggestedReviewers.map(suggestedReviewer => {
+		const account = parseAccount(suggestedReviewer.reviewer, undefined);
+		return {
+			...account,
+			isAuthor: suggestedReviewer.isAuthor,
+			isCommenter: suggestedReviewer.isCommenter
+		};
+	});
 
 	return ret.sort(loginComparator);
 }
@@ -1394,7 +1304,7 @@ export function parseGraphQLReviewEvent(
 		body: review.body,
 		bodyHTML: review.bodyHTML,
 		htmlUrl: review.url,
-		user: parseAuthor(review.author, githubRepository),
+		user: parseAccount(review.author, githubRepository),
 		authorAssociation: review.authorAssociation,
 		state: review.state,
 		id: review.databaseId,
@@ -1425,7 +1335,7 @@ export function parseGraphQLTimelineEvents(
 					htmlUrl: commentEvent.url,
 					body: commentEvent.body,
 					bodyHTML: commentEvent.bodyHTML,
-					user: parseAuthor(commentEvent.author, githubRepository),
+					user: parseAccount(commentEvent.author, githubRepository),
 					event: type,
 					canEdit: commentEvent.viewerCanUpdate,
 					canDelete: commentEvent.viewerCanDelete,
@@ -1446,7 +1356,7 @@ export function parseGraphQLTimelineEvents(
 					body: reviewEvent.body,
 					bodyHTML: reviewEvent.bodyHTML,
 					htmlUrl: reviewEvent.url,
-					user: parseAuthor(reviewEvent.author, githubRepository),
+					user: parseAccount(reviewEvent.author, githubRepository),
 					authorAssociation: reviewEvent.authorAssociation,
 					state: reviewEvent.state,
 					id: reviewEvent.databaseId,
@@ -1462,10 +1372,7 @@ export function parseGraphQLTimelineEvents(
 					event: type,
 					sha: commitEv.commit.oid,
 					author: commitEv.commit.author.user
-						? parseAuthor(
-								commitEv.commit.author.user,
-								githubRepository,
-							)
+						? parseAccount(commitEv.commit.author.user, githubRepository)
 						: { login: commitEv.commit.committer.name },
 					htmlUrl: commitEv.url,
 					message: commitEv.commit.message,
@@ -1496,7 +1403,7 @@ export function parseGraphQLTimelineEvents(
 				normalizedEvents.push({
 					id: assignEv.id,
 					event: type,
-					user: parseAuthor(assignEv.user, githubRepository),
+					user: parseAccount(assignEv.user, githubRepository),
 					actor: assignEv.actor,
 				});
 
@@ -1539,10 +1446,9 @@ export function parseGraphQLUser(
 		bio: user.user.bio,
 		company: user.user.company,
 		location: user.user.location,
-		commitContributions: parseGraphQLCommitContributions(
-			user.user.contributionsCollection,
-		),
+		commitContributions: parseGraphQLCommitContributions(user.user.contributionsCollection),
 		id: user.user.id,
+		accountType: toAccountType(user.user.__typename)
 	};
 }
 
@@ -1624,10 +1530,7 @@ export function getReactionGroup(): {
 	return ret;
 }
 
-export async function restPaginate<R extends OctokitTypes.RequestInterface, T>(
-	request: R,
-	variables: Parameters<R>[0],
-): Promise<T[]> {
+export async function restPaginate<R extends OctokitTypes.RequestInterface, T>(request: R, variables: Parameters<R>[0], per_page: number = 100): Promise<T[]> {
 	let page = 1;
 
 	let results: T[] = [];
@@ -1635,11 +1538,13 @@ export async function restPaginate<R extends OctokitTypes.RequestInterface, T>(
 	let hasNextPage = false;
 
 	do {
-		const result = await request({
-			...(variables as any),
-			per_page: 100,
-			page,
-		});
+		const result = await request(
+			{
+				...(variables as any),
+				per_page,
+				page
+			}
+		);
 
 		results = results.concat(result.data as T[]);
 

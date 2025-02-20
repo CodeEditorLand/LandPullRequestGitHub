@@ -64,6 +64,7 @@ import {
 	getAvatarWithEnterpriseFallback,
 	getOverrideBranch,
 	isInCodespaces,
+	parseAccount,
 	parseGraphQLIssue,
 	parseGraphQLPullRequest,
 	parseGraphQLViewerPermission,
@@ -647,10 +648,7 @@ export class GitHubRepository extends Disposable {
 				(template) => template.body,
 			);
 		} catch (e) {
-			Logger.error(
-				`Fetching pull request templates failed: ${e}`,
-				this.id,
-			);
+			// The template was not found.
 		}
 	}
 
@@ -1253,6 +1251,23 @@ export class GitHubRepository extends Disposable {
 				owner: remote.owner,
 				repo: remote.repositoryName,
 			});
+			Logger.debug(`Fork repository - done`, this.id);
+			// GitHub can say the fork succeeded but it isn't actually ready yet.
+			// So we wait up to 5 seconds for the fork to be ready
+			const start = Date.now();
+			let exists = async () => {
+				try {
+					await octokit.call(octokit.api.repos.get, { owner: result.data.owner.login, repo: result.data.name });
+					Logger.appendLine('Fork ready', this.id);
+					return true;
+				} catch (e) {
+					Logger.appendLine('Fork not ready yet', this.id);
+					return false;
+				}
+			};
+			while (!(await exists()) && ((Date.now() - start) < 5000)) {
+				await new Promise(resolve => setTimeout(resolve, 500));
+			}
 
 			return result.data.clone_url;
 		} catch (e) {
@@ -1739,22 +1754,9 @@ export class GitHubRepository extends Disposable {
 				}
 
 				ret.push(
-					...result.data.repository.mentionableUsers.nodes.map(
-						(node) => {
-							return {
-								login: node.login,
-								avatarUrl: getAvatarWithEnterpriseFallback(
-									node.avatarUrl,
-									undefined,
-									this.remote.isEnterprise,
-								),
-								name: node.name,
-								url: node.url,
-								email: node.email,
-								id: node.id,
-							};
-						},
-					),
+					...result.data.repository.mentionableUsers.nodes.map(node => {
+						return parseAccount(node, this);
+					}),
 				);
 
 				hasNextPage =
@@ -1813,22 +1815,9 @@ export class GitHubRepository extends Disposable {
 				}
 
 				ret.push(
-					...result.data.repository.assignableUsers.nodes.map(
-						(node) => {
-							return {
-								login: node.login,
-								avatarUrl: getAvatarWithEnterpriseFallback(
-									node.avatarUrl,
-									undefined,
-									this.remote.isEnterprise,
-								),
-								name: node.name,
-								url: node.url,
-								email: node.email,
-								id: node.id,
-							};
-						},
-					),
+					...result.data.repository.assignableUsers.nodes.map(node => {
+						return parseAccount(node, this);
+					}),
 				);
 
 				hasNextPage =
@@ -2016,22 +2005,9 @@ export class GitHubRepository extends Disposable {
 			}
 
 			ret.push(
-				...result.data.repository.pullRequest.participants.nodes.map(
-					(node) => {
-						return {
-							login: node.login,
-							avatarUrl: getAvatarWithEnterpriseFallback(
-								node.avatarUrl,
-								undefined,
-								this.remote.isEnterprise,
-							),
-							name: node.name,
-							url: node.url,
-							email: node.email,
-							id: node.id,
-						};
-					},
-				),
+				...result.data.repository.pullRequest.participants.nodes.map(node => {
+					return parseAccount(node, this);
+				}),
 			);
 		} catch (e) {
 			Logger.debug(

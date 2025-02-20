@@ -32,6 +32,7 @@ import {
 	ReviewState,
 } from './interface';
 import { IssueOverviewPanel } from './issueOverview';
+import { PullRequestGitHelper } from './pullRequestGitHelper';
 import { PullRequestModel } from './pullRequestModel';
 import { PullRequestView } from './pullRequestOverviewCommon';
 import { getAssigneesQuickPickItems, getMilestoneFromQuickPick, getProjectFromQuickPick, pickEmail, reviewersQuickPick } from './quickPicks';
@@ -209,7 +210,9 @@ export class PullRequestOverviewPanel extends IssueOverviewPanel<PullRequestMode
 			this._folderRepositoryManager.mergeQueueMethodForBranch(pullRequestModel.base.ref, pullRequestModel.remote.owner, pullRequestModel.remote.repositoryName),
 			this._folderRepositoryManager.isHeadUpToDateWithBase(pullRequestModel),
 			pullRequestModel.getMergeability(),
-			this._folderRepositoryManager.credentialStore.getIsEmu(pullRequestModel.remote.authProviderId)])
+			this._folderRepositoryManager.credentialStore.getIsEmu(pullRequestModel.remote.authProviderId),
+			pullRequestModel.githubRepository.getAuthenticatedUserEmails(),
+			PullRequestGitHelper.getEmail(this._folderRepositoryManager.repository)])
 			.then(result => {
 				const [
 					pullRequest,
@@ -225,7 +228,9 @@ export class PullRequestOverviewPanel extends IssueOverviewPanel<PullRequestMode
 					mergeQueueMethod,
 					isBranchUpToDateWithBase,
 					mergeability,
-					isEmu
+					isEmu,
+					gitHubEmails,
+					gitEmail
 				] = result;
 				if (!pullRequest) {
 					throw new Error(
@@ -255,6 +260,8 @@ export class PullRequestOverviewPanel extends IssueOverviewPanel<PullRequestMode
 				const isUpdateBranchWithGitHubEnabled: boolean = this.isUpdateBranchWithGitHubEnabled();
 				const continueOnGitHub = isCrossRepository && isInCodespaces();
 				const reviewState = this.getCurrentUserReviewState(this._existingReviewers, currentUser);
+				const emailForCommit = isEmu ? undefined : ((gitEmail && gitHubEmails.find(email => email.toLowerCase() === gitEmail.toLowerCase())) ?? currentUser.email);
+
 				Logger.debug('pr.initialize', PullRequestOverviewPanel.ID);
 				const context: Partial<PullRequest> = {
 					number: pullRequest.number,
@@ -271,6 +278,7 @@ export class PullRequestOverviewPanel extends IssueOverviewPanel<PullRequestMode
 						name: pullRequest.author.name,
 						avatarUrl: pullRequest.userAvatar,
 						url: pullRequest.author.url,
+						accountType: pullRequest.author.accountType
 					},
 					state: pullRequest.state,
 					events: timelineEvents,
@@ -303,7 +311,7 @@ export class PullRequestOverviewPanel extends IssueOverviewPanel<PullRequestMode
 					milestone: pullRequest.milestone,
 					assignees: pullRequest.assignees,
 					continueOnGitHub,
-					emailForCommit: isEmu ? undefined : currentUser.email,
+					emailForCommit,
 					isAuthor: currentUser.login === pullRequest.author.login,
 					currentUserReviewState: reviewState,
 					isDarkTheme: vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark,
@@ -433,20 +441,20 @@ export class PullRequestOverviewPanel extends IssueOverviewPanel<PullRequestMode
 			quickPick.busy = true;
 
 			if (allReviewers) {
-				const newUserReviewers: string[] = [];
-				const newTeamReviewers: string[] = [];
+				const newUserReviewers: IAccount[] = [];
+				const newTeamReviewers: ITeam[] = [];
 				allReviewers.forEach(reviewer => {
-					const newReviewers = isTeam(reviewer.user) ? newTeamReviewers : newUserReviewers;
-					newReviewers.push(reviewer.user.id);
+					const newReviewers: (IAccount | ITeam)[] = isTeam(reviewer.user) ? newTeamReviewers : newUserReviewers;
+					newReviewers.push(reviewer.user);
 				});
 
-				const removedUserReviewers: string[] = [];
-				const removedTeamReviewers: string[] = [];
+				const removedUserReviewers: IAccount[] = [];
+				const removedTeamReviewers: ITeam[] = [];
 				this._existingReviewers.forEach(existing => {
-					let newReviewers: string[] = isTeam(existing.reviewer) ? newTeamReviewers : newUserReviewers;
-					let removedReviewers: string[] = isTeam(existing.reviewer) ? removedTeamReviewers : removedUserReviewers;
-					if (!newReviewers.find(newTeamReviewer => newTeamReviewer === existing.reviewer.id)) {
-						removedReviewers.push(existing.reviewer.id);
+					let newReviewers: (IAccount | ITeam)[] = isTeam(existing.reviewer) ? newTeamReviewers : newUserReviewers;
+					let removedReviewers: (IAccount | ITeam)[] = isTeam(existing.reviewer) ? removedTeamReviewers : removedUserReviewers;
+					if (!newReviewers.find(newTeamReviewer => newTeamReviewer.id === existing.reviewer.id)) {
+						removedReviewers.push(existing.reviewer);
 					}
 				});
 
@@ -786,12 +794,12 @@ export class PullRequestOverviewPanel extends IssueOverviewPanel<PullRequestMode
 
 	private reRequestReview(message: IRequestMessage<string>): void {
 		let targetReviewer: ReviewState | undefined;
-		const userReviewers: string[] = [];
-		const teamReviewers: string[] = [];
+		const userReviewers: IAccount[] = [];
+		const teamReviewers: ITeam[] = [];
 
 		for (const reviewer of this._existingReviewers) {
 			let id: string | undefined;
-			let reviewerArray: string[] | undefined;
+			let reviewerArray: (IAccount | ITeam)[] | undefined;
 			if (reviewer && isTeam(reviewer.reviewer)) {
 				id = reviewer.reviewer.id;
 				reviewerArray = teamReviewers;
@@ -800,7 +808,7 @@ export class PullRequestOverviewPanel extends IssueOverviewPanel<PullRequestMode
 				reviewerArray = userReviewers;
 			}
 			if (reviewerArray && id && ((reviewer.state === 'REQUESTED') || (id === message.args))) {
-				reviewerArray.push(id);
+				reviewerArray.push(reviewer.reviewer);
 				if (id === message.args) {
 					targetReviewer = reviewer;
 				}

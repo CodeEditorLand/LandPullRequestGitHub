@@ -419,9 +419,9 @@ export class FolderRepositoryManager extends Disposable {
 
 		if (activeRemotes.length) {
 			await vscode.commands.executeCommand('setContext', 'github:hasGitHubRemotes', true);
-			Logger.appendLine(`Found GitHub remote for folder ${this.repository.rootUri.fsPath}`);
+			Logger.appendLine(`Found GitHub remote for folder ${this.repository.rootUri.fsPath}`, this.id);
 		} else {
-			Logger.appendLine(`No GitHub remotes found for folder ${this.repository.rootUri.fsPath}`);
+			Logger.appendLine(`No GitHub remotes found for folder ${this.repository.rootUri.fsPath}`, this.id);
 		}
 
 		return activeRemotes;
@@ -463,7 +463,7 @@ export class FolderRepositoryManager extends Disposable {
 
 	private async doUpdateRepositories(silent: boolean): Promise<boolean> {
 		if (this._git.state === 'uninitialized') {
-			Logger.appendLine('Cannot updates repositories as git is uninitialized');
+			Logger.appendLine('Cannot updates repositories as git is uninitialized', this.id);
 
 			return false;
 		}
@@ -601,7 +601,7 @@ export class FolderRepositoryManager extends Disposable {
 				}
 			}
 		} catch (e) {
-			Logger.appendLine(`Missing upstream check failed: ${e}`);
+			Logger.appendLine(`Missing upstream check failed: ${e}`, this.id);
 			// ignore
 		}
 		return false;
@@ -697,7 +697,7 @@ export class FolderRepositoryManager extends Disposable {
 		}
 
 		if (this._mentionableUsers) {
-			Logger.appendLine('Using in-memory cached mentionable users.');
+			Logger.appendLine('Using in-memory cached mentionable users.', this.id);
 			return this._mentionableUsers;
 		}
 
@@ -717,7 +717,7 @@ export class FolderRepositoryManager extends Disposable {
 		}
 
 		if (this._assignableUsers) {
-			Logger.appendLine('Using in-memory cached assignable users.');
+			Logger.appendLine('Using in-memory cached assignable users.', this.id);
 			return this._assignableUsers;
 		}
 
@@ -754,7 +754,7 @@ export class FolderRepositoryManager extends Disposable {
 		}
 
 		if (this._teamReviewers) {
-			Logger.appendLine('Using in-memory cached team reviewers.');
+			Logger.appendLine('Using in-memory cached team reviewers.', this.id);
 			return this._teamReviewers;
 		}
 
@@ -2424,7 +2424,17 @@ export class FolderRepositoryManager extends Disposable {
 
 			// respect the git setting to fetch before checkout
 			if (vscode.workspace.getConfiguration(GIT).get<boolean>(PULL_BEFORE_CHECKOUT, false) && branchObj.upstream) {
-				await this.repository.fetch({ remote: branchObj.upstream.remote, ref: `${branchObj.upstream.name}:${branchObj.name}` });
+				try {
+					await this.repository.fetch({ remote: branchObj.upstream.remote, ref: `${branchObj.upstream.name}:${branchObj.name}` });
+				} catch (e) {
+					if (e.stderr?.startsWith && e.stderr.startsWith('fatal: refusing to fetch into branch')) {
+						// This can happen when there's some state on the "main" branch
+						// This could be unpushed commits or a bisect for example
+						vscode.window.showErrorMessage(vscode.l10n.t('Unable to fetch the {0} branch. There is some state (bisect, unpushed commits, etc.) on {0} that is preventing the fetch.', [branchObj.name]));
+					} else {
+						throw e;
+					}
+				}
 			}
 
 			if (branchObj.upstream && branch === branchObj.upstream.name) {

@@ -3,36 +3,21 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as vscode from "vscode";
-
-import { onDidUpdatePR, openPullRequestOnGitHub } from "../commands";
-import { IComment } from "../common/comment";
-import { disposeAll } from "../common/lifecycle";
-import { ReviewEvent as CommonReviewEvent } from "../common/timelineEvent";
-import { formatError } from "../common/utils";
-import { getNonce, IRequestMessage, WebviewViewBase } from "../common/webview";
-import { ReviewManager } from "../view/reviewManager";
-import { FolderRepositoryManager } from "./folderRepositoryManager";
-import {
-	GithubItemStateEnum,
-	IAccount,
-	isTeam,
-	PullRequestMergeability,
-	reviewerId,
-	ReviewEvent,
-	ReviewState,
-} from "./interface";
-import { PullRequestModel } from "./pullRequestModel";
-import { getDefaultMergeMethod } from "./pullRequestOverview";
-import { PullRequestView } from "./pullRequestOverviewCommon";
-import { isInCodespaces, parseReviewers } from "./utils";
-import { MergeArguments, PullRequest, ReviewType } from "./views";
-
-export class PullRequestViewProvider
-	extends WebviewViewBase
-	implements vscode.WebviewViewProvider
-{
-	public override readonly viewType = "github:activePullRequest";
+import * as vscode from 'vscode';
+import { onDidUpdatePR, openPullRequestOnGitHub } from '../commands';
+import { IComment } from '../common/comment';
+import { disposeAll } from '../common/lifecycle';
+import { ReviewEvent as CommonReviewEvent } from '../common/timelineEvent';
+import { formatError } from '../common/utils';
+import { getNonce, IRequestMessage, WebviewViewBase } from '../common/webview';
+import { ReviewManager } from '../view/reviewManager';
+import { FolderRepositoryManager } from './folderRepositoryManager';
+import { GithubItemStateEnum, IAccount, isTeam, ITeam, PullRequestMergeability, reviewerId, ReviewEvent, ReviewState } from './interface';
+import { PullRequestModel } from './pullRequestModel';
+import { getDefaultMergeMethod } from './pullRequestOverview';
+import { PullRequestView } from './pullRequestOverviewCommon';
+import { isInCodespaces, parseReviewers } from './utils';
+import { MergeArguments, PullRequest, ReviewType } from './views';
 
 	private _existingReviewers: ReviewState[] = [];
 
@@ -264,16 +249,12 @@ export class PullRequestViewProvider
 
 	private reRequestReview(message: IRequestMessage<string>): void {
 		let targetReviewer: ReviewState | undefined;
-
-		const userReviewers: string[] = [];
-
-		const teamReviewers: string[] = [];
+		const userReviewers: IAccount[] = [];
+		const teamReviewers: ITeam[] = [];
 
 		for (const reviewer of this._existingReviewers) {
 			let id: string | undefined;
-
-			let reviewerArray: string[] | undefined;
-
+			let reviewerArray: (IAccount | ITeam)[] | undefined;
 			if (reviewer && isTeam(reviewer.reviewer)) {
 				id = reviewer.reviewer.id;
 
@@ -283,14 +264,8 @@ export class PullRequestViewProvider
 
 				reviewerArray = userReviewers;
 			}
-
-			if (
-				reviewerArray &&
-				id &&
-				(reviewer.state === "REQUESTED" || id === message.args)
-			) {
-				reviewerArray.push(id);
-
+			if (reviewerArray && id && ((reviewer.state === 'REQUESTED') || (id === message.args))) {
+				reviewerArray.push(reviewer.reviewer);
 				if (id === message.args) {
 					targetReviewer = reviewer;
 				}
@@ -485,6 +460,7 @@ export class PullRequestViewProvider
 						url: pullRequest.author.url,
 						email: pullRequest.author.email,
 						id: pullRequest.author.id,
+						accountType: pullRequest.author.accountType,
 					},
 					state: pullRequest.state,
 					isCurrentlyCheckedOut: isCurrentlyCheckedOut,

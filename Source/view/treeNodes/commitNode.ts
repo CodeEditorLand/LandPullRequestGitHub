@@ -3,27 +3,20 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as path from "path";
-import * as vscode from "vscode";
-
-import { getGitChangeType } from "../../common/diffHunk";
-import {
-	FILE_LIST_LAYOUT,
-	PR_SETTINGS_NAMESPACE,
-} from "../../common/settingKeys";
-import { DataUri, toReviewUri } from "../../common/uri";
-import { dateFromNow } from "../../common/utils";
-import { OctokitCommon } from "../../github/common";
-import { FolderRepositoryManager } from "../../github/folderRepositoryManager";
-import { IAccount } from "../../github/interface";
-import {
-	IResolvedPullRequestModel,
-	PullRequestModel,
-} from "../../github/pullRequestModel";
-import { GitFileChangeModel } from "../fileChangeModel";
-import { DirectoryTreeNode } from "./directoryTreeNode";
-import { GitFileChangeNode } from "./fileChangeNode";
-import { LabelOnlyNode, TreeNode, TreeNodeParent } from "./treeNode";
+import * as path from 'path';
+import * as vscode from 'vscode';
+import { getGitChangeType } from '../../common/diffHunk';
+import { FILE_LIST_LAYOUT, PR_SETTINGS_NAMESPACE } from '../../common/settingKeys';
+import { DataUri, toReviewUri } from '../../common/uri';
+import { dateFromNow } from '../../common/utils';
+import { OctokitCommon } from '../../github/common';
+import { FolderRepositoryManager } from '../../github/folderRepositoryManager';
+import { AccountType, IAccount } from '../../github/interface';
+import { IResolvedPullRequestModel, PullRequestModel } from '../../github/pullRequestModel';
+import { GitFileChangeModel } from '../fileChangeModel';
+import { DirectoryTreeNode } from './directoryTreeNode';
+import { GitFileChangeNode } from './fileChangeNode';
+import { LabelOnlyNode, TreeNode, TreeNodeParent } from './treeNode';
 
 export class CommitNode extends TreeNode implements vscode.TreeItem {
 	public sha: string;
@@ -60,21 +53,8 @@ export class CommitNode extends TreeNode implements vscode.TreeItem {
 
 	async getTreeItem(): Promise<vscode.TreeItem> {
 		if (this.commit.author) {
-			const author: IAccount = {
-				id: this.commit.author.node_id,
-				login: this.commit.author.login,
-				url: this.commit.author.url,
-				avatarUrl: this.commit.author.avatar_url,
-			};
-
-			this.iconPath = (
-				await DataUri.avatarCirclesAsImageDataUris(
-					this.pullRequestManager.context,
-					[author],
-					16,
-					16,
-				)
-			)[0];
+			const author: IAccount = { id: this.commit.author.node_id, login: this.commit.author.login, url: this.commit.author.url, avatarUrl: this.commit.author.avatar_url, accountType: this.commit.author.type as AccountType };
+			this.iconPath = (await DataUri.avatarCirclesAsImageDataUris(this.pullRequestManager.context, [author], 16, 16))[0];
 		}
 
 		return this;

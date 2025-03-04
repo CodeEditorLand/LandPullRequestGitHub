@@ -3646,7 +3646,7 @@
 		"stream-http": "3.2.0",
 		"tunnel": "0.0.6",
 		"url-search-params-polyfill": "8.2.5",
-		"uuid": "11.0.5",
+		"uuid": "11.1.0",
 		"vsls": "1.0.4753"
 	},
 	"devDependencies": {
@@ -3654,8 +3654,8 @@
 		"@types/glob": "8.1.0",
 		"@types/lru-cache": "7.10.10",
 		"@types/marked": "6.0.0",
-		"@types/node": "22.13.4",
-		"@types/sinon": "17.0.3",
+		"@types/node": "22.13.9",
+		"@types/sinon": "17.0.4",
 		"@types/temp": "0.9.4",
 		"assert": "2.1.0",
 		"buffer": "6.0.3",

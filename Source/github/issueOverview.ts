@@ -199,8 +199,8 @@ export class IssueOverviewPanel<
 					},
 				});
 			})
-			.catch((e) => {
-				vscode.window.showErrorMessage(formatError(e));
+			.catch(e => {
+				vscode.window.showErrorMessage(`Error updating issue description: ${formatError(e)}`);
 			});
 	}
 

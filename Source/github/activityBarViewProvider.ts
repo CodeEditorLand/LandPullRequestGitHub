@@ -498,8 +498,8 @@ import { MergeArguments, PullRequest, ReviewType } from './views';
 					pullrequest: context,
 				});
 			})
-			.catch((e) => {
-				vscode.window.showErrorMessage(formatError(e));
+			.catch(e => {
+				vscode.window.showErrorMessage(`Error updating active pull request view: ${formatError(e)}`);
 			});
 	}
 

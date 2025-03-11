@@ -15,7 +15,8 @@ declare module "vscode" {
 		): Disposable;
 	}
 
-	interface QuickDiffProvider {
+	export interface QuickDiffProvider {
 		label?: string;
+		readonly visible?: boolean;
 	}
 }

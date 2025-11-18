@@ -3874,7 +3874,7 @@
 		"eslint-plugin-import": "2.31.0",
 		"event-stream": "^4.0.1",
 		"fork-ts-checker-webpack-plugin": "9.1.0",
-		"glob": "11.0.2",
+		"glob": "11.1.0",
 		"graphql": "16.11.0",
 		"graphql-tag": "2.12.6",
 		"gulp-filter": "^9.0.1",
